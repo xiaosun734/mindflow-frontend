@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, type ComponentPublicInstance } from 'vue'
 import type { ChatMessage } from '../types/api'
 
 const messages = ref<ChatMessage[]>([])
@@ -7,6 +7,11 @@ const input = ref('')
 const isLoading = ref(false)
 const error = ref('')
 const chatEl = ref<HTMLDivElement>()
+const cmu = ref<HTMLElement>()
+
+function setCmuRef(el: Element | ComponentPublicInstance | null) {
+  cmu.value = el as HTMLElement
+}
 
 async function send() {
   const text = input.value.trim()
@@ -63,6 +68,8 @@ async function send() {
           }
           if (parsed.content) {
             aiMsg.content += parsed.content
+            await nextTick()
+            scrollBottom()
           }
         } catch (e: any) {
           if (e.message !== parsed?.error) throw e
@@ -84,9 +91,11 @@ async function send() {
 }
 
 function scrollBottom() {
-  if (chatEl.value) {
-    chatEl.value.scrollTop = chatEl.value.scrollHeight
-  }
+  if (!chatEl.value || !cmu.value) return
+  const chatRect = chatEl.value.getBoundingClientRect()
+  const cmuRect = cmu.value.getBoundingClientRect()
+  // 用户消息在滚动容器内的绝对偏移：当前可见偏移 + 已滚动距离
+  chatEl.value.scrollTop = cmuRect.top - chatRect.top + chatEl.value.scrollTop
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -110,6 +119,7 @@ function onKeydown(e: KeyboardEvent) {
         v-for="(m, i) in messages"
         :key="i"
         :class="['chat-msg', m.role]"
+        :ref="m.role === 'user' ? setCmuRef : undefined"
       >
         <span class="msg-role">{{ m.role === 'user' ? '🧑' : '🤖' }}</span>
         <span class="msg-content">{{ m.content || (isLoading && m.role === 'assistant' ? '思考中…' : '') }}</span>
