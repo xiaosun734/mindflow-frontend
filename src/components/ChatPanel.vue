@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, nextTick, type ComponentPublicInstance } from 'vue'
-import type { ChatMessage } from '../types/api'
+import type { ChatMessage, EmbedResponse } from '../types/api'
 
 const messages = ref<ChatMessage[]>([])
 const input = ref('')
@@ -98,6 +98,38 @@ function scrollBottom() {
   chatEl.value.scrollTop = cmuRect.top - chatRect.top + chatEl.value.scrollTop
 }
 
+const embedResult = ref('')
+
+async function embed() {
+  const text = input.value.trim()
+  if (!text) return
+
+  error.value = ''
+  embedResult.value = '计算中…'
+
+  try {
+    const res = await fetch('/api/embed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: text }),
+    })
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+      throw new Error(err.message || `HTTP ${res.status}`)
+    }
+
+    const { data } = (await res.json()) as { data: EmbedResponse }
+    embedResult.value = `向量维度: ${data.embedding.length}\nToken 数: ${data.tokens}\n前5个值: [${data.embedding
+      .slice(0, 5)
+      .map((v) => v.toFixed(6))
+      .join(', ')}]`
+  } catch (e: any) {
+    error.value = e.message || 'Embedding 请求失败'
+    embedResult.value = ''
+  }
+}
+
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
@@ -125,6 +157,10 @@ function onKeydown(e: KeyboardEvent) {
         }}</span>
       </div>
 
+      <div v-if="embedResult" class="chat-embed-result">
+        <pre>{{ embedResult }}</pre>
+      </div>
+
       <div v-if="error" class="chat-error">{{ error }}</div>
     </div>
 
@@ -137,6 +173,7 @@ function onKeydown(e: KeyboardEvent) {
         rows="2"
         @keydown="onKeydown"
       ></textarea>
+      <button class="chat-embed" :disabled="!input.trim()" @click="embed">Embed</button>
       <button class="chat-send" :disabled="isLoading || !input.trim()" @click="send">
         {{ isLoading ? '发送中…' : '发送' }}
       </button>
@@ -245,6 +282,37 @@ function onKeydown(e: KeyboardEvent) {
 
 .chat-input:focus {
   border-color: var(--accent-border);
+}
+
+.chat-embed {
+  flex-shrink: 0;
+  padding: 8px 20px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 15px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chat-embed:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.chat-embed-result {
+  background: var(--code-bg);
+  padding: 12px 16px;
+  border-radius: 10px;
+  text-align: left;
+}
+
+.chat-embed-result pre {
+  margin: 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .chat-send {

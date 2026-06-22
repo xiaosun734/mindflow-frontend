@@ -12,3 +12,12 @@ export interface ChatMessage {
 export interface ChatRequest {
   messages: ChatMessage[]
 }
+
+export interface EmbedRequest {
+  input: string | string[]
+}
+
+export interface EmbedResponse {
+  embedding: number[]
+  tokens: number
+}
