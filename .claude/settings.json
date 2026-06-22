@@ -5,7 +5,23 @@
       "Bash(curl -s -X POST http://localhost:3001/api/chat -H \"Content-Type: application/json\" -d '{\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}')",
       "Bash(kill %1)",
       "Bash(netstat -ano)",
-      "Bash(tasklist)"
+      "Bash(tasklist)",
+      "Bash(ping -n 2 db.agudniamrkxthgylpriu.supabase.co)",
+      "Bash(curl -v --connect-timeout 10 telnet://db.agudniamrkxthgylpriu.supabase.co:5432)",
+      "Bash(nslookup db.agudniamrkxthgylpriu.supabase.co)",
+      "Bash(timeout 5 bash -c 'echo > /dev/tcp/db.agudniamrkxthgylpriu.supabase.co/5432')",
+      "Bash(npx prisma *)",
+      "Bash(npx tsx *)",
+      "Bash(xargs grep -l \"Adapter\\\\|PrismaSqlite\\\\|PrismaPg\\\\|definePrisma\")",
+      "Bash(npm install *)",
+      "Bash(npm --version)",
+      "Bash(npm cache *)",
+      "WebSearch",
+      "Read(//c/Users/m1738/AppData/Local/npm-cache/_logs/**)",
+      "Bash(pnpm add *)",
+      "Bash(pnpm approve-builds *)",
+      "Bash(pnpm config *)",
+      "Bash(pnpm install *)"
     ]
   }
 }
