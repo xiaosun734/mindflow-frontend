@@ -12,17 +12,17 @@ const client = new OpenAI({
   baseURL: process.env.OPENAI_BASE_URL,
 })
 
-app.post('/api/chat', async(req,res) => {
+app.post('/api/chat', async (req, res) => {
   const { messages } = req.body as ChatRequest
 
-  if(!messages || messages.length === 0 || !Array.isArray(messages)){
-    res.status(400).json({code: 400,message: 'messages is required',data: null})
+  if (!messages || messages.length === 0 || !Array.isArray(messages)) {
+    res.status(400).json({ code: 400, message: 'messages is required', data: null })
     return
   }
 
-  res.setHeader('Content-Type','text/event-stream')
-  res.setHeader('Cache-Control','no-cache')
-  res.setHeader('Connection','keep-alive')
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
   res.flushHeaders()
 
   try {
@@ -34,21 +34,24 @@ app.post('/api/chat', async(req,res) => {
 
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content
-      if(content){
+      if (content) {
         res.write(`data: ${JSON.stringify({ content })}\n\n`)
       }
     }
 
     res.write('data: [DONE]\n\n')
     res.end()
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : 'Internal Server Error'
+    // eslint-disable-next-line no-console
     console.error('OpenAI API error:', error)
-    res.write(`data: ${JSON.stringify({ error: error.message || 'Internal Server Error' })}\n\n`)
+    res.write(`data: ${JSON.stringify({ error: errMsg })}\n\n`)
     res.end()
   }
 })
 
 const PORT = process.env.PORT || 3001
-app.listen(PORT,() => {
+app.listen(PORT, () => {
+  // eslint-disable-next-line no-console
   console.log(`Server is running on port ${PORT}`)
 })

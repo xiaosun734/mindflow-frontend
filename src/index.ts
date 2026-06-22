@@ -1,1 +1,2 @@
-console.log("MindFlow Server")
+// eslint-disable-next-line no-console
+console.log('MindFlow Server')

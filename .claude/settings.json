@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx ts-node *)",
+      "Bash(curl -s -X POST http://localhost:3001/api/chat -H \"Content-Type: application/json\" -d '{\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}')",
+      "Bash(kill %1)",
+      "Bash(netstat -ano)",
+      "Bash(tasklist)"
+    ]
+  }
+}

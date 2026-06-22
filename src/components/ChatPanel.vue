@@ -34,7 +34,7 @@ async function send() {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: messages.value.filter(m => m !== aiMsg) }),
+      body: JSON.stringify({ messages: messages.value.filter((m) => m !== aiMsg) }),
     })
 
     if (!res.ok) {
@@ -111,9 +111,7 @@ function onKeydown(e: KeyboardEvent) {
     <h2 class="chat-title">💬 API 测试面板</h2>
 
     <div ref="chatEl" class="chat-messages">
-      <div v-if="messages.length === 0" class="chat-empty">
-        输入消息，测试 /api/chat 接口
-      </div>
+      <div v-if="messages.length === 0" class="chat-empty">输入消息，测试 /api/chat 接口</div>
 
       <div
         v-for="(m, i) in messages"
@@ -122,7 +120,9 @@ function onKeydown(e: KeyboardEvent) {
         :ref="m.role === 'user' ? setCmuRef : undefined"
       >
         <span class="msg-role">{{ m.role === 'user' ? '🧑' : '🤖' }}</span>
-        <span class="msg-content">{{ m.content || (isLoading && m.role === 'assistant' ? '思考中…' : '') }}</span>
+        <span class="msg-content">{{
+          m.content || (isLoading && m.role === 'assistant' ? '思考中…' : '')
+        }}</span>
       </div>
 
       <div v-if="error" class="chat-error">{{ error }}</div>
@@ -137,11 +137,7 @@ function onKeydown(e: KeyboardEvent) {
         rows="2"
         @keydown="onKeydown"
       ></textarea>
-      <button
-        class="chat-send"
-        :disabled="isLoading || !input.trim()"
-        @click="send"
-      >
+      <button class="chat-send" :disabled="isLoading || !input.trim()" @click="send">
         {{ isLoading ? '发送中…' : '发送' }}
       </button>
     </div>
