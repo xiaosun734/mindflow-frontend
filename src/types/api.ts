@@ -11,6 +11,8 @@ export interface ChatMessage {
 
 export interface ChatRequest {
   messages: ChatMessage[]
+  /** 会话 ID，后端会作为 x-opencode-session 请求头转发给上游 */
+  sessionId?: string
 }
 
 export interface EmbedRequest {

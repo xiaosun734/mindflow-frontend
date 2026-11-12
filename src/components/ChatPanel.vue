@@ -8,6 +8,10 @@ const isLoading = ref(false)
 const error = ref('')
 const chatEl = ref<HTMLDivElement>()
 const cmu = ref<HTMLElement>()
+// 每次页面会话使用固定 ID，上游据此做路由与提示词缓存
+// randomUUID 仅在安全上下文可用，非 HTTPS 部署时退回普通随机 ID
+const sessionId =
+  globalThis.crypto?.randomUUID?.() ?? `mindflow-${Date.now()}-${Math.random().toString(36).slice(2)}`
 
 function setCmuRef(el: Element | ComponentPublicInstance | null) {
   cmu.value = el as HTMLElement
@@ -22,8 +26,9 @@ async function send() {
   input.value = ''
 
   // 添加一条空的 assistant 消息，用于流式填充
-  const aiMsg: ChatMessage = { role: 'assistant', content: '' }
-  messages.value.push(aiMsg)
+  messages.value.push({ role: 'assistant', content: '' })
+  // 必须拿到数组里的响应式代理；直接修改 push 进去的原始对象不会触发视图更新
+  const aiMsg = messages.value[messages.value.length - 1]
 
   await nextTick()
   scrollBottom()
@@ -34,7 +39,10 @@ async function send() {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: messages.value.filter((m) => m !== aiMsg) }),
+      body: JSON.stringify({
+        messages: messages.value.filter((m) => m !== aiMsg),
+        sessionId,
+      }),
     })
 
     if (!res.ok) {
@@ -61,19 +69,22 @@ async function send() {
         const data = line.slice(6).trim()
         if (data === '[DONE]') continue
 
+        let parsed: { content?: string; error?: string }
         try {
-          const parsed = JSON.parse(data)
-          if (parsed.error) {
-            throw new Error(parsed.error)
-          }
-          if (parsed.content) {
-            aiMsg.content += parsed.content
-            await nextTick()
-            scrollBottom()
-          }
-        } catch (e: any) {
-          if (e.message !== parsed?.error) throw e
-          throw e
+          parsed = JSON.parse(data)
+        } catch {
+          // 忽略不完整的 JSON 分片
+          continue
+        }
+
+        if (parsed.error) {
+          throw new Error(parsed.error)
+        }
+
+        if (parsed.content) {
+          aiMsg.content += parsed.content
+          await nextTick()
+          scrollBottom()
         }
       }
     }

@@ -3,9 +3,12 @@ import OpenAI from 'openai'
 import dotenv from 'dotenv'
 dotenv.config({ path: new URL('../.env', import.meta.url) })
 import type { ChatRequest, EmbedRequest } from '../src/types/api'
+import { upstreamHeadersMiddleware } from './upstream.ts'
 
 const app = express()
 app.use(express.json())
+// 按当前上游服务商生成请求头；切换模型/服务商只需修改 .env
+app.use('/api/chat', upstreamHeadersMiddleware(() => process.env.OPENAI_BASE_URL))
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -25,17 +28,24 @@ app.post('/api/chat', async (req, res) => {
     return
   }
 
+  const { upstreamHeaders } = res.locals as { upstreamHeaders: Record<string, string> }
+
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
+  // 避免 Nginx 等反向代理缓冲 SSE
+  res.setHeader('X-Accel-Buffering', 'no')
   res.flushHeaders()
 
   try {
-    const stream = await client.chat.completions.create({
-      model: process.env.OPENAI_MODEL,
-      messages,
-      stream: true,
-    })
+    const stream = await client.chat.completions.create(
+      {
+        model: process.env.OPENAI_MODEL,
+        messages,
+        stream: true,
+      },
+      { headers: upstreamHeaders },
+    )
 
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content
