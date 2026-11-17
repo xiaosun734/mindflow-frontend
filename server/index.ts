@@ -1,23 +1,25 @@
 import express from 'express'
 import OpenAI from 'openai'
-import dotenv from 'dotenv'
-dotenv.config({ path: new URL('../.env', import.meta.url) })
 import type { ChatRequest, EmbedRequest } from '../src/types/api'
+import { config } from './config.ts'
 import { upstreamHeadersMiddleware } from './upstream.ts'
 
 const app = express()
 app.use(express.json())
 // 按当前上游服务商生成请求头；切换模型/服务商只需修改 .env
-app.use('/api/chat', upstreamHeadersMiddleware(() => process.env.OPENAI_BASE_URL))
+app.use(
+  '/api/chat',
+  upstreamHeadersMiddleware(() => config.openai.baseURL),
+)
 
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  baseURL: process.env.OPENAI_BASE_URL,
+  apiKey: config.openai.apiKey,
+  baseURL: config.openai.baseURL,
 })
 
 const embedClient = new OpenAI({
-  apiKey: process.env.EMBED_API_KEY,
-  baseURL: process.env.EMBED_BASE_URL,
+  apiKey: config.embed.apiKey,
+  baseURL: config.embed.baseURL,
 })
 
 app.post('/api/chat', async (req, res) => {
@@ -40,7 +42,7 @@ app.post('/api/chat', async (req, res) => {
   try {
     const stream = await client.chat.completions.create(
       {
-        model: process.env.OPENAI_MODEL,
+        model: config.openai.model,
         messages,
         stream: true,
       },
@@ -75,7 +77,7 @@ app.post('/api/embed', async (req, res) => {
 
   try {
     const response = await embedClient.embeddings.create({
-      model: process.env.EMBED_MODEL,
+      model: config.embed.model,
       input,
     })
 
@@ -91,7 +93,7 @@ app.post('/api/embed', async (req, res) => {
   }
 })
 
-const PORT = process.env.PORT || 3001
+const PORT = config.port
 app.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`Server is running on port ${PORT}`)
