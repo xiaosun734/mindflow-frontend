@@ -47,6 +47,37 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_conversations_user
     ON conversations(user_id, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS documents (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title      TEXT NOT NULL,
+    filename   TEXT NOT NULL,
+    mime       TEXT,
+    size       INTEGER NOT NULL DEFAULT 0,
+    status     TEXT NOT NULL DEFAULT 'pending'
+               CHECK (status IN ('pending', 'processing', 'ready', 'error')),
+    error      TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS chunks (
+    id          TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    idx         INTEGER NOT NULL,
+    heading     TEXT,
+    content     TEXT NOT NULL,
+    char_count  INTEGER NOT NULL,
+    embedding   TEXT,
+    created_at  INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_documents_user
+    ON documents(user_id, updated_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_chunks_document
+    ON chunks(document_id, idx);
 `)
 
 db.prepare(

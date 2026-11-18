@@ -2,6 +2,7 @@ import express from 'express'
 import { db } from './lib/db.ts'
 import { chatRouter } from './routes/chat.ts'
 import { conversationsRouter } from './routes/conversations.ts'
+import { documentsRouter } from './routes/documents.ts'
 import { embedRouter } from './routes/embed.ts'
 
 export const app = express()
@@ -20,3 +21,4 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/chat', chatRouter)
 app.use('/api/embed', embedRouter)
 app.use('/api/conversations', conversationsRouter)
+app.use('/api/documents', documentsRouter)
