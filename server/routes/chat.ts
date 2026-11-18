@@ -1,7 +1,9 @@
 import { Router } from 'express'
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import type { ChatRequest } from '../../src/types/api'
 import { config } from '../config.ts'
 import { client } from '../lib/openai.ts'
+import { withSystemPrompt } from '../lib/prompt.ts'
 import { upstreamHeadersMiddleware } from '../upstream.ts'
 
 export const chatRouter = Router()
@@ -18,6 +20,13 @@ chatRouter.post('/', async (req, res) => {
 
   const { upstreamHeaders } = res.locals as { upstreamHeaders: Record<string, string> }
 
+  const chatMessages = messages.map((message): ChatCompletionMessageParam => {
+    if (message.role === 'assistant') {
+      return { role: 'assistant', content: message.content }
+    }
+    return { role: 'user', content: message.content }
+  })
+
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
@@ -28,7 +37,7 @@ chatRouter.post('/', async (req, res) => {
     const stream = await client.chat.completions.create(
       {
         model: config.openai.model,
-        messages,
+        messages: withSystemPrompt(chatMessages),
         stream: true,
       },
       { headers: upstreamHeaders },

@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { config } from '../config.ts'
 import { db } from '../lib/db.ts'
 import { client } from '../lib/openai.ts'
+import { withSystemPrompt } from '../lib/prompt.ts'
 import { createSseStream } from '../lib/sse.ts'
 import { resolveUpstreamHeaders } from '../upstream.ts'
 
@@ -46,15 +47,17 @@ function getChatMessages(conversationId: string): ChatCompletionMessageParam[] {
     )
     .all(conversationId) as unknown as StoredMessage[]
 
-  return rows.map((message) => {
-    if (message.role === 'system') {
-      return { role: 'system', content: message.content }
-    }
-    if (message.role === 'assistant') {
-      return { role: 'assistant', content: message.content }
-    }
-    return { role: 'user', content: message.content }
-  })
+  return withSystemPrompt(
+    rows.map((message) => {
+      if (message.role === 'system') {
+        return { role: 'system', content: message.content }
+      }
+      if (message.role === 'assistant') {
+        return { role: 'assistant', content: message.content }
+      }
+      return { role: 'user', content: message.content }
+    }),
+  )
 }
 
 function insertMessage(params: {
