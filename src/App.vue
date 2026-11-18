@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import ChatPanel from './components/ChatPanel.vue'
+import AppShell from './components/layout/AppShell.vue'
 </script>
 
 <template>
-  <ChatPanel />
+  <AppShell />
 </template>
