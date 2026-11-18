@@ -11,6 +11,7 @@ function required(name: string): string {
 
 export const config = {
   port: Number(process.env.PORT ?? 3001),
+  chunkStrategy: process.env.CHUNK_STRATEGY ?? 'markdown',
   openai: {
     apiKey: required('OPENAI_API_KEY'),
     baseURL: process.env.OPENAI_BASE_URL,

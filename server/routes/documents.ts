@@ -3,8 +3,10 @@ import { unlink, writeFile } from 'node:fs/promises'
 import { extname } from 'node:path'
 import { Router } from 'express'
 import multer from 'multer'
+import { config } from '../config.ts'
 import { db } from '../lib/db.ts'
 import { ensureUploadDir, storedFilePath } from '../lib/storage.ts'
+import { getChunker, listChunkers } from '../services/chunking/index.ts'
 import { ingestDocument } from '../services/ingest.ts'
 
 export const documentsRouter = Router()
@@ -28,8 +30,27 @@ const upload = multer({
 })
 
 const documentColumns = `
-  id, title, filename, mime, size, status, error, created_at, updated_at
+  id, title, filename, mime, size, status, error, chunk_strategy, created_at, updated_at
 `
+
+function resolveChunkStrategy(value: unknown): string {
+  const name = typeof value === 'string' && value.trim() ? value.trim() : config.chunkStrategy
+  getChunker(name)
+  return name
+}
+
+function chunkerOptions() {
+  return listChunkers().map(({ name, label, description }) => ({
+    name,
+    label,
+    description,
+  }))
+}
+
+// GET /api/documents/chunkers
+documentsRouter.get('/chunkers', (_req, res) => {
+  res.json({ code: 0, message: 'ok', data: chunkerOptions() })
+})
 
 // GET /api/documents
 documentsRouter.get('/', (_req, res) => {
@@ -72,13 +93,22 @@ documentsRouter.post(
     const title = (titleInput || fallbackTitle).slice(0, 100) || '未命名文档'
     const filePath = storedFilePath(id, originalName)
 
+    let chunkStrategy: string
+    try {
+      chunkStrategy = resolveChunkStrategy(req.body.chunkStrategy)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知的分块策略'
+      res.status(400).json({ code: 400, message, data: chunkerOptions() })
+      return
+    }
+
     try {
       await writeFile(filePath, req.file.buffer)
 
       db.prepare(
         `insert into documents
-           (id, user_id, title, filename, mime, size, status, error, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, 'pending', null, ?, ?)`,
+           (id, user_id, title, filename, mime, size, status, error, chunk_strategy, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, 'pending', null, ?, ?, ?)`,
       ).run(
         id,
         DEMO_USER_ID,
@@ -86,6 +116,7 @@ documentsRouter.post(
         originalName,
         req.file.mimetype || null,
         req.file.size,
+        chunkStrategy,
         now,
         now,
       )
@@ -113,8 +144,10 @@ documentsRouter.post(
 // POST /api/documents/:id/reindex
 documentsRouter.post('/:id/reindex', (req, res) => {
   const document = db
-    .prepare('select id, status from documents where id = ? and user_id = ?')
-    .get(req.params.id, DEMO_USER_ID) as { id: string; status: string } | undefined
+    .prepare('select id, status, chunk_strategy from documents where id = ? and user_id = ?')
+    .get(req.params.id, DEMO_USER_ID) as
+    | { id: string; status: string; chunk_strategy: string }
+    | undefined
 
   if (!document) {
     res.status(404).json({ code: 404, message: 'Document not found', data: null })
@@ -126,16 +159,29 @@ documentsRouter.post('/:id/reindex', (req, res) => {
     return
   }
 
+  const body = (req.body ?? {}) as { chunkStrategy?: unknown }
+  let chunkStrategy = document.chunk_strategy
+
+  if (body.chunkStrategy !== undefined) {
+    try {
+      chunkStrategy = resolveChunkStrategy(body.chunkStrategy)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知的分块策略'
+      res.status(400).json({ code: 400, message, data: chunkerOptions() })
+      return
+    }
+  }
+
   db.prepare(
     `update documents
-     set status = 'processing', error = null, updated_at = ?
+     set status = 'processing', error = null, chunk_strategy = ?, updated_at = ?
      where id = ?`,
-  ).run(Date.now(), document.id)
+  ).run(chunkStrategy, Date.now(), document.id)
 
   res.status(202).json({
     code: 0,
     message: 'ok',
-    data: { id: document.id, status: 'processing' },
+    data: { id: document.id, status: 'processing', chunk_strategy: chunkStrategy },
   })
 
   void ingestDocument(document.id).catch((error: unknown) => {

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { chunkMarkdown } from './chunking.ts'
+import { getChunker } from './chunking/index.ts'
 import { embedTexts } from '../lib/embedding.ts'
 import { db } from '../lib/db.ts'
 import { storedFilePath } from '../lib/storage.ts'
@@ -9,6 +9,7 @@ interface DocumentRow {
   id: string
   filename: string
   title: string
+  chunk_strategy: string
 }
 
 function updateStatus(
@@ -30,7 +31,7 @@ function updateStatus(
  */
 export async function ingestDocument(documentId: string): Promise<void> {
   const document = db
-    .prepare('select id, filename, title from documents where id = ?')
+    .prepare('select id, filename, title, chunk_strategy from documents where id = ?')
     .get(documentId) as DocumentRow | undefined
 
   if (!document) {
@@ -42,7 +43,8 @@ export async function ingestDocument(documentId: string): Promise<void> {
   try {
     const filePath = storedFilePath(document.id, document.filename)
     const source = await readFile(filePath, 'utf8')
-    const chunks = chunkMarkdown(source)
+    const chunker = getChunker(document.chunk_strategy)
+    const chunks = chunker.chunk(source)
 
     if (chunks.length === 0) {
       throw new Error('文档没有可索引的内容')

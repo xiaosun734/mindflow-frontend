@@ -58,6 +58,7 @@ db.exec(`
     status     TEXT NOT NULL DEFAULT 'pending'
                CHECK (status IN ('pending', 'processing', 'ready', 'error')),
     error      TEXT,
+    chunk_strategy TEXT NOT NULL DEFAULT 'markdown',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -79,6 +80,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_chunks_document
     ON chunks(document_id, idx);
 `)
+
+function ensureColumn(table: string, column: string, definition: string) {
+  const columns = db
+    .prepare(`pragma table_info(${table})`)
+    .all() as unknown as Array<{ name: string }>
+
+  if (!columns.some((item) => item.name === column)) {
+    db.exec(`alter table ${table} add column ${column} ${definition}`)
+  }
+}
+
+// 兼容已经创建过 documents 表的数据库
+ensureColumn('documents', 'chunk_strategy', "TEXT NOT NULL DEFAULT 'markdown'")
 
 db.prepare(
   `
