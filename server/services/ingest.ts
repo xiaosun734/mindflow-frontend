@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { getChunker } from './chunking/index.ts'
+import { invalidateRetrievalCache } from './retrieval.ts'
 import { embedTexts } from '../lib/embedding.ts'
 import { db } from '../lib/db.ts'
 import { storedFilePath } from '../lib/storage.ts'
 
 interface DocumentRow {
   id: string
+  user_id: string
   filename: string
   title: string
   chunk_strategy: string
@@ -31,7 +33,7 @@ function updateStatus(
  */
 export async function ingestDocument(documentId: string): Promise<void> {
   const document = db
-    .prepare('select id, filename, title, chunk_strategy from documents where id = ?')
+    .prepare('select id, user_id, filename, title, chunk_strategy from documents where id = ?')
     .get(documentId) as DocumentRow | undefined
 
   if (!document) {
@@ -82,6 +84,7 @@ export async function ingestDocument(documentId: string): Promise<void> {
 
       updateStatus(documentId, 'ready')
       db.exec('commit')
+      invalidateRetrievalCache(document.user_id)
     } catch (error) {
       db.exec('rollback')
       throw error
@@ -89,6 +92,7 @@ export async function ingestDocument(documentId: string): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Indexing failed'
     updateStatus(documentId, 'error', message)
+    invalidateRetrievalCache(document.user_id)
     throw error
   }
 }

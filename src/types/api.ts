@@ -22,6 +22,7 @@ export interface Conversation {
   id: string
   title: string
   summary: string | null
+  mode: 'chat' | 'rag'
   created_at: number
   updated_at: number
 }

@@ -26,6 +26,7 @@ db.exec(`
     user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title      TEXT NOT NULL DEFAULT '新对话',
     summary    TEXT,
+    mode       TEXT NOT NULL DEFAULT 'chat' CHECK (mode IN ('chat', 'rag')),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -93,6 +94,9 @@ function ensureColumn(table: string, column: string, definition: string) {
 
 // 兼容已经创建过 documents 表的数据库
 ensureColumn('documents', 'chunk_strategy', "TEXT NOT NULL DEFAULT 'markdown'")
+
+// 兼容已经创建过 conversations 表的数据库
+ensureColumn('conversations', 'mode', "TEXT NOT NULL DEFAULT 'chat'")
 
 db.prepare(
   `

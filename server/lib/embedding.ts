@@ -24,6 +24,8 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
         const response = await embedClient.embeddings.create({
           model: config.embed.model,
           input: batch,
+          // 明确要求浮点数组，避免部分兼容接口忽略 base64 编码导致向量解析错误
+          encoding_format: 'float',
         })
 
         const batchEmbeddings = [...response.data]

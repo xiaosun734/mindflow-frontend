@@ -7,15 +7,28 @@ import { db } from '../lib/db.ts'
 import { client } from '../lib/openai.ts'
 import { withSystemPrompt } from '../lib/prompt.ts'
 import { createSseStream } from '../lib/sse.ts'
+import {
+  buildRagContext,
+  buildRagMessages,
+  extractCitations,
+  type Citation,
+} from '../services/rag.ts'
+import { retrieveChunks } from '../services/retrieval.ts'
 import { resolveUpstreamHeaders } from '../upstream.ts'
 
 export const conversationsRouter = Router()
 
 // Phase 5 加登录后，这里会换成当前登录用户
 const DEMO_USER_ID = 'demo'
+const REFUSAL_MESSAGE = '根据现有资料无法回答。'
+
+type ConversationMode = 'chat' | 'rag'
+
+const ConversationModeSchema = z.enum(['chat', 'rag'])
 
 const CreateConversationSchema = z.object({
   title: z.string().trim().min(1).max(100).optional(),
+  mode: ConversationModeSchema.optional(),
 })
 
 const RenameConversationSchema = z.object({
@@ -24,6 +37,7 @@ const RenameConversationSchema = z.object({
 
 const SendMessageSchema = z.object({
   content: z.string().trim().min(1).max(20_000),
+  mode: ConversationModeSchema.optional(),
 })
 
 interface StoredMessage {
@@ -31,13 +45,22 @@ interface StoredMessage {
   content: string
 }
 
-function getConversation(id: string) {
-  return db
-    .prepare('select id from conversations where id = ? and user_id = ?')
-    .get(id, DEMO_USER_ID)
+interface ConversationRow {
+  id: string
+  mode: ConversationMode
 }
 
-function getChatMessages(conversationId: string): ChatCompletionMessageParam[] {
+function normalizeMode(value: string): ConversationMode {
+  return value === 'rag' ? 'rag' : 'chat'
+}
+
+function getConversation(id: string): ConversationRow | undefined {
+  return db
+    .prepare('select id, mode from conversations where id = ? and user_id = ?')
+    .get(id, DEMO_USER_ID) as unknown as ConversationRow | undefined
+}
+
+function getHistoryMessages(conversationId: string): ChatCompletionMessageParam[] {
   const rows = db
     .prepare(
       `select role, content
@@ -47,17 +70,15 @@ function getChatMessages(conversationId: string): ChatCompletionMessageParam[] {
     )
     .all(conversationId) as unknown as StoredMessage[]
 
-  return withSystemPrompt(
-    rows.map((message) => {
-      if (message.role === 'system') {
-        return { role: 'system', content: message.content }
-      }
-      if (message.role === 'assistant') {
-        return { role: 'assistant', content: message.content }
-      }
-      return { role: 'user', content: message.content }
-    }),
-  )
+  return rows.map((message) => {
+    if (message.role === 'system') {
+      return { role: 'system', content: message.content }
+    }
+    if (message.role === 'assistant') {
+      return { role: 'assistant', content: message.content }
+    }
+    return { role: 'user', content: message.content }
+  })
 }
 
 function insertMessage(params: {
@@ -65,16 +86,55 @@ function insertMessage(params: {
   role: 'system' | 'user' | 'assistant'
   content: string
   status: 'streaming' | 'done' | 'error' | 'stopped'
-}) {
+  error?: string | null
+}): string {
   const id = randomUUID()
   const now = Date.now()
 
   db.prepare(
-    `insert into messages (id, conversation_id, role, content, status, created_at)
-     values (?, ?, ?, ?, ?, ?)`,
-  ).run(id, params.conversationId, params.role, params.content, params.status, now)
+    `insert into messages
+       (id, conversation_id, role, content, status, error, created_at)
+     values (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    params.conversationId,
+    params.role,
+    params.content,
+    params.status,
+    params.error ?? null,
+    now,
+  )
 
   return id
+}
+
+function touchConversation(conversationId: string) {
+  db.prepare('update conversations set updated_at = ? where id = ?').run(
+    Date.now(),
+    conversationId,
+  )
+}
+
+function sendRefusal(
+  res: Response,
+  params: {
+    conversationId: string
+    userMessageId: string | null
+    assistantMessageId: string
+    content: string
+  },
+) {
+  const sse = createSseStream(res)
+
+  sse.send('meta', {
+    conversationId: params.conversationId,
+    userMessageId: params.userMessageId,
+    assistantMessageId: params.assistantMessageId,
+    mode: 'rag',
+  })
+  sse.send('delta', { content: params.content })
+  sse.send('done', { usage: null, citations: [] })
+  sse.close()
 }
 
 async function streamAssistantReply(
@@ -84,6 +144,8 @@ async function streamAssistantReply(
     assistantMessageId: string
     userMessageId: string | null
     chatMessages: ChatCompletionMessageParam[]
+    mode: ConversationMode
+    citations?: Citation[]
   },
 ) {
   const sse = createSseStream(res)
@@ -92,21 +154,29 @@ async function streamAssistantReply(
   let usage: unknown = null
   let finalized = false
 
-  const finish = (status: 'done' | 'error' | 'stopped', errorMessage: string | null = null) => {
+  const finish = (
+    status: 'done' | 'error' | 'stopped',
+    errorMessage: string | null = null,
+    usedCitations: Citation[] = params.citations
+      ? extractCitations(content, params.citations)
+      : [],
+  ) => {
     if (finalized) return
     finalized = true
 
     db.prepare(
       `update messages
-       set content = ?, status = ?, error = ?
+       set content = ?, status = ?, error = ?, citations = ?
        where id = ?`,
-    ).run(content, status, errorMessage, params.assistantMessageId)
-
-    db.prepare('update conversations set updated_at = ? where id = ?').run(
-      Date.now(),
-      params.conversationId,
+    ).run(
+      content,
+      status,
+      errorMessage,
+      usedCitations.length > 0 ? JSON.stringify(usedCitations) : null,
+      params.assistantMessageId,
     )
 
+    touchConversation(params.conversationId)
     sse.close()
   }
 
@@ -121,6 +191,7 @@ async function streamAssistantReply(
     conversationId: params.conversationId,
     userMessageId: params.userMessageId,
     assistantMessageId: params.assistantMessageId,
+    mode: params.mode,
   })
 
   try {
@@ -153,8 +224,12 @@ async function streamAssistantReply(
 
     if (finalized) return
 
-    sse.send('done', { usage })
-    finish('done')
+    const usedCitations = params.citations
+      ? extractCitations(content, params.citations)
+      : []
+
+    sse.send('done', { usage, citations: usedCitations })
+    finish('done', null, usedCitations)
   } catch (error: unknown) {
     if (controller.signal.aborted) return
 
@@ -168,7 +243,7 @@ async function streamAssistantReply(
 conversationsRouter.get('/', (_req, res) => {
   const conversations = db
     .prepare(
-      `select id, title, summary, created_at, updated_at
+      `select id, title, summary, mode, created_at, updated_at
        from conversations
        where user_id = ?
        order by updated_at desc`,
@@ -194,15 +269,16 @@ conversationsRouter.post('/', (req, res) => {
   const id = randomUUID()
   const now = Date.now()
   const title = parsed.data.title ?? '新对话'
+  const mode = parsed.data.mode ?? 'chat'
 
   db.prepare(
-    `insert into conversations (id, user_id, title, created_at, updated_at)
-     values (?, ?, ?, ?, ?)`,
-  ).run(id, DEMO_USER_ID, title, now, now)
+    `insert into conversations (id, user_id, title, mode, created_at, updated_at)
+     values (?, ?, ?, ?, ?, ?)`,
+  ).run(id, DEMO_USER_ID, title, mode, now, now)
 
   const conversation = db
     .prepare(
-      `select id, title, summary, created_at, updated_at
+      `select id, title, summary, mode, created_at, updated_at
        from conversations
        where id = ?`,
     )
@@ -240,7 +316,7 @@ conversationsRouter.patch('/:id', (req, res) => {
 
   const conversation = db
     .prepare(
-      `select id, title, summary, created_at, updated_at
+      `select id, title, summary, mode, created_at, updated_at
        from conversations
        where id = ?`,
     )
@@ -285,8 +361,10 @@ conversationsRouter.get('/:id/messages', (req, res) => {
 })
 
 // POST /api/conversations/:id/messages
-conversationsRouter.post('/:id/messages', (req, res) => {
-  if (!getConversation(req.params.id)) {
+conversationsRouter.post('/:id/messages', async (req, res) => {
+  const conversation = getConversation(req.params.id)
+
+  if (!conversation) {
     res.status(404).json({ code: 404, message: 'Conversation not found', data: null })
     return
   }
@@ -302,33 +380,71 @@ conversationsRouter.post('/:id/messages', (req, res) => {
     return
   }
 
+  const mode = parsed.data.mode ?? normalizeMode(conversation.mode)
+
+  if (parsed.data.mode && parsed.data.mode !== conversation.mode) {
+    db.prepare('update conversations set mode = ? where id = ?').run(mode, conversation.id)
+  }
+
   try {
     const userMessageId = insertMessage({
-      conversationId: req.params.id,
+      conversationId: conversation.id,
       role: 'user',
       content: parsed.data.content,
       status: 'done',
     })
 
-    const chatMessages = getChatMessages(req.params.id)
+    const history = getHistoryMessages(conversation.id)
+    let chatMessages: ChatCompletionMessageParam[]
+    let citations: Citation[] = []
+
+    if (mode === 'rag') {
+      const retrieved = await retrieveChunks(DEMO_USER_ID, parsed.data.content, {
+        topK: config.rag.topK,
+        minSimilarity: config.rag.minSimilarity,
+      })
+
+      if (retrieved.length === 0) {
+        const assistantMessageId = insertMessage({
+          conversationId: conversation.id,
+          role: 'assistant',
+          content: REFUSAL_MESSAGE,
+          status: 'done',
+        })
+
+        touchConversation(conversation.id)
+        sendRefusal(res, {
+          conversationId: conversation.id,
+          userMessageId,
+          assistantMessageId,
+          content: REFUSAL_MESSAGE,
+        })
+        return
+      }
+
+      const rag = buildRagContext(retrieved)
+      citations = rag.citations
+      chatMessages = buildRagMessages(history, rag.context)
+    } else {
+      chatMessages = withSystemPrompt(history)
+    }
 
     const assistantMessageId = insertMessage({
-      conversationId: req.params.id,
+      conversationId: conversation.id,
       role: 'assistant',
       content: '',
       status: 'streaming',
     })
 
-    db.prepare('update conversations set updated_at = ? where id = ?').run(
-      Date.now(),
-      req.params.id,
-    )
+    touchConversation(conversation.id)
 
     void streamAssistantReply(res, {
-      conversationId: req.params.id,
+      conversationId: conversation.id,
       assistantMessageId,
       userMessageId,
       chatMessages,
+      mode,
+      citations,
     }).catch((error: unknown) => {
       // eslint-disable-next-line no-console
       console.error('Unexpected streaming error:', error)
@@ -342,8 +458,10 @@ conversationsRouter.post('/:id/messages', (req, res) => {
 })
 
 // POST /api/conversations/:id/regenerate
-conversationsRouter.post('/:id/regenerate', (req, res) => {
-  if (!getConversation(req.params.id)) {
+conversationsRouter.post('/:id/regenerate', async (req, res) => {
+  const conversation = getConversation(req.params.id)
+
+  if (!conversation) {
     res.status(404).json({ code: 404, message: 'Conversation not found', data: null })
     return
   }
@@ -356,7 +474,7 @@ conversationsRouter.post('/:id/regenerate', (req, res) => {
        order by created_at desc, rowid desc
        limit 1`,
     )
-    .get(req.params.id) as { id: string; role: string } | undefined
+    .get(conversation.id) as { id: string; role: string } | undefined
 
   if (!lastMessage || lastMessage.role !== 'assistant') {
     res.status(400).json({
@@ -367,6 +485,27 @@ conversationsRouter.post('/:id/regenerate', (req, res) => {
     return
   }
 
+  const lastUserMessage = db
+    .prepare(
+      `select content
+       from messages
+       where conversation_id = ? and role = 'user'
+       order by created_at desc, rowid desc
+       limit 1`,
+    )
+    .get(conversation.id) as { content: string } | undefined
+
+  if (!lastUserMessage) {
+    res.status(400).json({
+      code: 400,
+      message: 'No user message to regenerate from',
+      data: null,
+    })
+    return
+  }
+
+  const mode = normalizeMode(conversation.mode)
+
   try {
     db.prepare(
       `update messages
@@ -374,18 +513,49 @@ conversationsRouter.post('/:id/regenerate', (req, res) => {
        where id = ?`,
     ).run(lastMessage.id)
 
-    const chatMessages = getChatMessages(req.params.id)
+    const history = getHistoryMessages(conversation.id)
+    let chatMessages: ChatCompletionMessageParam[]
+    let citations: Citation[] = []
 
-    db.prepare('update conversations set updated_at = ? where id = ?').run(
-      Date.now(),
-      req.params.id,
-    )
+    if (mode === 'rag') {
+      const retrieved = await retrieveChunks(DEMO_USER_ID, lastUserMessage.content, {
+        topK: config.rag.topK,
+        minSimilarity: config.rag.minSimilarity,
+      })
+
+      if (retrieved.length === 0) {
+        db.prepare(
+          `update messages
+           set content = ?, status = 'done', error = null, citations = null
+           where id = ?`,
+        ).run(REFUSAL_MESSAGE, lastMessage.id)
+
+        touchConversation(conversation.id)
+        sendRefusal(res, {
+          conversationId: conversation.id,
+          userMessageId: null,
+          assistantMessageId: lastMessage.id,
+          content: REFUSAL_MESSAGE,
+        })
+        return
+      }
+
+      const rag = buildRagContext(retrieved)
+      citations = rag.citations
+      chatMessages = buildRagMessages(history, rag.context)
+    } else {
+      chatMessages = withSystemPrompt(history)
+    }
+
+    touchConversation(conversation.id)
 
     void streamAssistantReply(res, {
-      conversationId: req.params.id,
+      conversationId: conversation.id,
       assistantMessageId: lastMessage.id,
       userMessageId: null,
       chatMessages,
+      mode,
+      citations,
     }).catch((error: unknown) => {
       // eslint-disable-next-line no-console
       console.error('Unexpected streaming error:', error)

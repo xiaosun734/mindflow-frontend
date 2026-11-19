@@ -76,6 +76,8 @@ Copy-Item .env.example .env
 | `EMBED_BASE_URL` | Embedding 模型的 OpenAI 兼容接口地址 |
 | `EMBED_MODEL` | Embedding 模型名称 |
 | `CHUNK_STRATEGY` | 可选，文档分块策略：`markdown`（默认）、`plain`、`fixed` |
+| `RAG_TOP_K` | 可选，RAG 返回的 chunk 数量，默认 `6` |
+| `RAG_MIN_SIMILARITY` | 可选，相似度阈值，默认 `0.3` |
 | `PORT` | 后端端口，默认 `3001` |
 
 > `.env` 已被 `.gitignore` 忽略，请勿把真实密钥提交到仓库。

@@ -8,6 +8,7 @@ import { db } from '../lib/db.ts'
 import { ensureUploadDir, storedFilePath } from '../lib/storage.ts'
 import { getChunker, listChunkers } from '../services/chunking/index.ts'
 import { ingestDocument } from '../services/ingest.ts'
+import { invalidateRetrievalCache } from '../services/retrieval.ts'
 
 export const documentsRouter = Router()
 
@@ -203,6 +204,7 @@ documentsRouter.delete('/:id', async (req, res) => {
 
   db.prepare('delete from documents where id = ?').run(document.id)
   await unlink(storedFilePath(document.id, document.filename)).catch(() => {})
+  invalidateRetrievalCache(DEMO_USER_ID)
 
   res.json({ code: 0, message: 'ok', data: { id: document.id } })
 })
